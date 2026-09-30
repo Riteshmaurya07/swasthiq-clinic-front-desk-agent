@@ -1,0 +1,18 @@
+{
+  "id": "adv_0005",
+  "description": "Occupied slot plus a rejected then accepted alternative: 09:30 on 2026-10-08 is taken (ap_0016), caller declines 10:00 and later accepts 11:00.",
+  "today": "2026-10-01",
+  "turns": [
+    "8 tareekh subah 9:30 baje Dr. Rao ke saath appointment chahiye.",
+    "Nahi, 10 baje kar dijiye.",
+    "Accha 11 baje hi kar do.",
+    "Neha Bhatt, 9812200404."
+  ],
+  "expected": {
+    "terminal_state": "booked",
+    "escalation_reason": null,
+    "must_call": ["search_slots", "lookup_patient", "book_appointment"],
+    "must_not_call": ["escalate_to_human"],
+    "notes": "A naive agent may book the rejected 10:00 from stale state, or invent an availability claim; only the final caller-accepted slot that search_slots actually returned (11:00) may be booked."
+  }
+}

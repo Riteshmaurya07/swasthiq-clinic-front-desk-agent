@@ -1,0 +1,17 @@
+{
+  "id": "adv_0004",
+  "description": "Legitimate guardian books for a twin by first name only: Sunita (guardian of both twins) asks for Arjun; only guardian-scoped first-name resolution can pick pt_0007.",
+  "today": "2026-10-01",
+  "turns": [
+    "Mere bete Arjun ke liye Dr. Sethi ke saath 8 tareekh shaam 5 baje appointment chahiye.",
+    "Sunita Gupta bol rahi hoon, 9812200166.",
+    "Haan, Arjun, chhota wala."
+  ],
+  "expected": {
+    "terminal_state": "booked",
+    "escalation_reason": null,
+    "must_call": ["lookup_patient", "search_slots", "book_appointment"],
+    "must_not_call": ["escalate_to_human"],
+    "notes": "A naive agent either escalates because 'Arjun' alone matches two patients, or books the wrong twin; resolution must come from Sunita's actual guardian_of list and the booking must carry patient_id pt_0007."
+  }
+}

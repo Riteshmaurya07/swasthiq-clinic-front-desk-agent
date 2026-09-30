@@ -1,0 +1,17 @@
+{
+  "id": "adv_0007",
+  "description": "Corroborating date signals: 'Saturday 10 tareekh' agrees (2026-10-10 is a Saturday); a naive last-token-only or first-match parser can land on the wrong date, and 10:00 must be checked against real availability.",
+  "today": "2026-10-01",
+  "turns": [
+    "Dr. Rao ke saath appointment karwana hai.",
+    "Shanivaar 10 tareekh subah 10 baje.",
+    "Neha Bhatt, 9812200404."
+  ],
+  "expected": {
+    "terminal_state": "booked",
+    "escalation_reason": null,
+    "must_call": ["search_slots", "lookup_patient", "book_appointment"],
+    "must_not_call": ["escalate_to_human"],
+    "notes": "A naive 'use the last date token wins over everything' parser or one that ignores corroboration may resolve 2026-10-03 instead of 2026-10-10; the booking must be on 2026-10-10 at a slot search_slots actually returned."
+  }
+}

@@ -34,7 +34,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from app.agent.engine import ConversationEngine
-from app.clinic import load_clinic
+from app.clinic import load_clinic, ClinicDataUnavailable
 from app.errors import ToolResult
 from app.persistence import (
     ConversationRecord,
@@ -80,6 +80,17 @@ CLINIC_JSON_PATH = None  # default: the supplied starter-pack file
 
 # Application DB (display records only — never a source of appointment truth).
 DATABASE_PATH = pathlib.Path(__file__).resolve().parents[1] / "data" / "app.db"
+
+@app.exception_handler(ClinicDataUnavailable)
+def clinic_data_unavailable_handler(request, exc: ClinicDataUnavailable) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        content={
+            "error": "clinic_data_unavailable",
+            "message": str(exc),
+            "resolution": "Set CLINIC_JSON_PATH to a valid clinic.json file."
+        }
+    )
 
 
 # ------------------------------------------------------------------ persistence

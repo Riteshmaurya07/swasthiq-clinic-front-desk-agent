@@ -149,8 +149,13 @@ def load_clinic(path: str | pathlib.Path | None = None) -> Clinic:
             "No clinic data configured. Set the CLINIC_JSON_PATH environment "
             "variable to your clinic JSON file (see README.md)."
         )
-    with file_path.open(encoding="utf-8") as handle:
-        raw = json.load(handle)
+    if not file_path.exists():
+        raise ClinicDataUnavailable(f"Configured clinic file not found: {file_path}")
+    try:
+        with file_path.open(encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except Exception as e:
+        raise ClinicDataUnavailable(f"Invalid or unreadable JSON in clinic file {file_path}: {e}")
 
     clinic_raw = raw["clinic"]
     doctors = tuple(

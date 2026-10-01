@@ -303,7 +303,8 @@ Any static host + Python host pair works; nothing exotic is required.
 1. `pip install fastapi uvicorn`
 2. `uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT` (from the repo root)
 3. Set `BACKEND_CORS_ORIGINS=https://<your-frontend-origin>` in the backend environment so the deployed dashboard can call the API. Origins are comma-separated; the local Vite dev origins (`http://localhost:5173`, `http://127.0.0.1:5173`) always remain allowed for development. Wildcard `*` is never used.
-4. The SQLite file is created at `backend/data/app.db` — mount a persistent volume if dashboard history must survive restarts.
+4. Set `CLINIC_JSON_PATH=backend/tests/fixtures/clinic_fixture.json` in the backend environment to use the public synthetic clinic data for the live demo.
+5. The SQLite file is created at `backend/data/app.db` — mount a persistent volume if dashboard history must survive restarts.
 
 One command for local evaluation of everything:
 

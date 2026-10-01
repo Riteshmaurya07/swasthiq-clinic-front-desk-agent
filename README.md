@@ -251,7 +251,7 @@ Sidebar, Card, Button, Badge, Table, Separator, Skeleton, Alert, Empty, Spinner,
 ## Testing
 
 ```bash
-# backend — 268 tests
+# backend — 287 tests
 python -m pytest -q
 
 # frontend — 23 tests
@@ -260,18 +260,14 @@ cd frontend && npm test
 # production build
 cd frontend && npm run build
 
-# evaluator (backend must be running)
-cd swasthiq-front-desk-agent-starter-pack
-python runner.py --url http://localhost:8000/agent/run
-python runner.py --url http://localhost:8000/agent/run --repeat 3
-python runner.py --url http://localhost:8000/agent/run --dir ../adversarial --repeat 3
+*Note: The confidential starter/evaluator pack supplied for the hiring assignment is not included in this public repository. The public repository can be tested with the included pytest suite, frontend tests, and authored adversarial cases. The hidden evaluator supplies its own runner and starter materials.*
 ```
 
 ## Verified results (final audit)
 
 | Check | Result |
 |---|---|
-| Backend pytest | **268 passed** (1 deprecation warning from starlette's testclient) |
+| Backend pytest | **287 passed** (1 deprecation warning from starlette's testclient) |
 | Frontend tests | **23 passed** |
 | Production build | success |
 | Supplied conversations | **15/15**, 0 failures |

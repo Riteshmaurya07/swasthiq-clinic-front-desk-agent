@@ -367,7 +367,7 @@ cd frontend && npm run build
 - `latency_ms` reflects the local machine; production numbers will differ.
 - Backend dependencies in `requirements.txt` are not version-pinned (the frontend lockfile is committed).
 
-- **Live deployment:** The dashboard is live at [https://frontend-omega-sable-e1wat5r269.vercel.app](https://frontend-omega-sable-e1wat5r269.vercel.app). The backend API is hosted at `https://swasthiq-clinic-front-desk-agent.onrender.com`.
+- **Live deployment:** The dashboard is live at [https://frontend-omega-sable-e4wat5r269.vercel.app/handoffs](https://frontend-omega-sable-e4wat5r269.vercel.app/handoffs). The backend API (Swagger Docs) is hosted at [https://swasthiq-clinic-front-desk-agent.onrender.com/docs](https://swasthiq-clinic-front-desk-agent.onrender.com/docs).
 
 ## Deployment instructions
 

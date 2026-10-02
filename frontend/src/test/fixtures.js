@@ -2,6 +2,8 @@
  * Fixtures shaped exactly like the Phase 7 API responses.
  */
 
+import { ApiError } from "@/lib/api"
+
 export const statsFixture = { total: 6, open: 2, resolved: 4 }
 
 export const conversationsFixture = {
@@ -82,6 +84,42 @@ export const conversationFixture = {
       result: null,
     },
   ],
+}
+
+/**
+ * Mock of the H-2 session endpoints. Starts signed out so the "does the gate
+ * render before data loads" case is the default, matching a real cold load.
+ */
+export function mockSession() {
+  const calls = []
+  let authenticated = false
+  return {
+    calls,
+    get authenticated() {
+      return authenticated
+    },
+    signIn() {
+      authenticated = true
+    },
+    me() {
+      calls.push({ path: "/api/auth/me", method: "GET" })
+      if (!authenticated) return Promise.reject(new ApiError("Unauthorized", 401))
+      return Promise.resolve({ authenticated: true })
+    },
+    login(username, password) {
+      calls.push({ path: "/api/auth/login", method: "POST", username })
+      if (username === "desk-operator" && password === "widget-2026") {
+        authenticated = true
+        return Promise.resolve({ authenticated: true })
+      }
+      return Promise.reject(new ApiError("Unauthorized", 401))
+    },
+    logout() {
+      calls.push({ path: "/api/auth/logout", method: "POST" })
+      authenticated = false
+      return Promise.resolve({ authenticated: false })
+    },
+  }
 }
 
 export function mockApi() {

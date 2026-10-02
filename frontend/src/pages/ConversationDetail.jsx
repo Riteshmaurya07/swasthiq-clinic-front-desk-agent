@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ApiError, fetchConversation } from "@/lib/api"
+import { useDashboardSession } from "@/components/auth/DashboardSession"
 import { useAsync } from "@/hooks/useApi"
 
 function DetailSkeleton() {
@@ -84,9 +85,11 @@ function LoadErrorState() {
 
 export function ConversationDetailPage() {
   const { conversationId } = useParams()
+  const { guard } = useDashboardSession()
   const { data, error, loading } = useAsync(
     () => fetchConversation(conversationId),
     [conversationId],
+    guard,
   )
 
   if (loading) return <DetailSkeleton />

@@ -44,3 +44,19 @@ Thumbs.db
 
 # Assistant workspace artifacts (not part of the submission)
 .freebuff/
+.agent/
+.agents/
+.gsd/
+ad
+.codex/
+.freebuff/
+.gemini
+adapters
+GSD-STYLE.md
+scripts
+model_capabilities.yaml
+PROJECT_RULES.md
+version
+_redteam
+.codebase-memory
+.tests

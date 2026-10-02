@@ -40,24 +40,8 @@ def book_appointment(clinic, store, args: dict[str, Any] | None) -> ToolResult:
             f"book_appointment: no doctor with id {doctor_id!r}",
             known_doctors=[d.id for d in clinic.doctors],
         )
-    if not is_doctor_available(clinic, doctor_id, date):
-        return ToolResult.failure(
-            ErrorCodes.SLOT_UNAVAILABLE,
-            f"book_appointment: {doctor_id} does not work on {date} "
-            "(holiday, leave, or no working window)",
-        )
-    if date < clinic.reference_date:
-        return ToolResult.failure(
-            ErrorCodes.INVALID_DATE,
-            f"book_appointment: {date} is in the past (clinic reference date "
-            f"{clinic.reference_date})",
-        )
-    if (parse_date(date) - parse_date(clinic.reference_date)).days > 30:
-        return ToolResult.failure(
-            ErrorCodes.INVALID_DATE,
-            f"book_appointment: {date} is more than 30 days ahead of the "
-            f"clinic reference date {clinic.reference_date}",
-        )
+    if (err := validate_bookable(clinic, doctor_id, date, "book_appointment")):
+        return err
 
     # Store.book re-checks slot occupancy under the store lock: the conflict
     # check happens at mutation time, not search time.
@@ -76,3 +60,37 @@ def _merged_windows(clinic, doctor_id: str, date: str):
 
     doctor = clinic.get_doctor(doctor_id)
     return merge_windows(doctor.windows_on(weekday_name(parse_date(date))))
+
+
+def validate_bookable(clinic, doctor_id: str, date: str, tool_name: str) -> ToolResult | None:
+    """Shared date/doctor validation for booking and rescheduling tools.
+
+    Checks: doctor exists, is available (not holiday/leave/no window),
+    date is not in the past, and date is within the 30-day booking horizon.
+    Returns a failure ToolResult on first violation, or None if valid.
+    """
+    if clinic.get_doctor(doctor_id) is None:
+        return ToolResult.failure(
+            ErrorCodes.UNKNOWN_DOCTOR,
+            f"{tool_name}: no doctor with id {doctor_id!r}",
+            known_doctors=[d.id for d in clinic.doctors],
+        )
+    if not is_doctor_available(clinic, doctor_id, date):
+        return ToolResult.failure(
+            ErrorCodes.SLOT_UNAVAILABLE,
+            f"{tool_name}: {doctor_id} does not work on {date} "
+            "(holiday, leave, or no working window)",
+        )
+    if date < clinic.reference_date:
+        return ToolResult.failure(
+            ErrorCodes.INVALID_DATE,
+            f"{tool_name}: {date} is in the past (clinic reference date "
+            f"{clinic.reference_date})",
+        )
+    if (parse_date(date) - parse_date(clinic.reference_date)).days > 30:
+        return ToolResult.failure(
+            ErrorCodes.INVALID_DATE,
+            f"{tool_name}: {date} is more than 30 days ahead of the "
+            f"clinic reference date {clinic.reference_date}",
+        )
+    return None

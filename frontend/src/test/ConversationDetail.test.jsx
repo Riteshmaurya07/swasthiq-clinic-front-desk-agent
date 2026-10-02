@@ -4,9 +4,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import App from "@/App"
 import { ApiError } from "@/lib/api"
-import { handoffsFixture, mockApi } from "./fixtures"
+import { handoffsFixture, mockApi, mockSession } from "./fixtures"
 
 let api
+let session
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal()
@@ -15,11 +16,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchConversation: vi.fn((id) => api.get(`/api/conversations/${id}`)),
     fetchHandoffs: vi.fn(() => Promise.resolve(handoffsFixture)),
     fetchHandoffStats: vi.fn(() => Promise.resolve({ total: 0, open: 0, resolved: 0 })),
+    // H-2: the dashboard is session-gated, so the app checks /api/auth/me first.
+    fetchSession: vi.fn(() => session.me()),
+    login: vi.fn((u, p) => session.login(u, p)),
+    logout: vi.fn(() => session.logout()),
   }
 })
 
 beforeEach(() => {
   api = mockApi()
+  session = mockSession()
+  session.signIn() // these tests describe the post-login dashboard
   vi.clearAllMocks()
 })
 

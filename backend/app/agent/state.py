@@ -30,6 +30,7 @@ class ConversationState:
     target_name: str | None = None
     target_patient_id: str | None = None
     target_mentioned: bool = False  # a third-party/dependent was referenced
+    target_match_count: int = 0  # records the last target name matched (>1 = ambiguous)
 
     # request parameters (latest explicit value wins)
     doctor_id: str | None = None

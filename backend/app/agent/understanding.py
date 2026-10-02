@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
+from app.agent.clinical_urgency import detect_clinical_urgency
+
 WEEKDAYS = {
     "somwar": 0, "monday": 0, "mon": 0,
     "mangalwar": 1, "tuesday": 1, "tue": 1, "tues": 1,
@@ -77,24 +79,6 @@ INJECTION_MARKERS = [
     "ignore patient authorisation",
 ]
 
-URGENT_PATTERNS = [
-    r"seene\s*(?:mein|me|main)\s*dard",
-    r"chati\s*(?:mein|me|main)\s*dard",
-    r"dil\s*(?:mein|me|main)\s*dard",
-    r"saans\s*(?:phool|phuul|chadh)",
-    r"saans\s*lene\s*(?:mein|me)\s*(?:dikkat|takleef|paresh)",
-    r"behosh",
-    r"hosh\s*(?:gaya|kho)",
-    r"khoon\s*(?:aa\s*raha|beh)",
-    r"(?:bahut|severe)\s*(?:tez\s*)?(?:dard|bleeding)",
-    r"stroke",
-    r"heart\s*attack",
-    r"unconscious",
-    r"breathless",
-    r"can(?:'|no)?t\s*breathe",
-    r"chest\s*pain",
-]
-
 ADVICE_PATTERNS = [
     r"goli\s*le\s*lun",
     r"(?:aur|another|one\s*more)\s+(?:ek\s+)?goli",
@@ -108,6 +92,13 @@ ADVICE_PATTERNS = [
     r"kitni\s*der\s*mein\s*utar",
     r"kya\s*(?:bimari|problem)\s*hai",
     r"kya\s*sahi\s*ilaj",
+    # H-3: the remaining realistic phrasings from the signal matrix.
+    r"ye\s*goli\s*lun\s*ya\s*nahi",
+    r"ye\s*dawai\s*le\s*lun",
+    r"\w+\s*ki\s*dawai\s*leni\s*chahiye",
+    r"mujhe\s*kya\s*khaana\s*chahiye",
+    r"side\s*effects?\s*kya\s*(?:hain|hai)",
+    r"injection\s*(?:lagwa|laga)\s*lena\s*chahiye",
 ]
 
 NAME_STRIP_LEADING = {"bas", "just", "mera", "meri", "yeh", "ye", "hm", "umm"}
@@ -398,9 +389,14 @@ def understand(turn: str) -> TurnSignals:
     lowered = turn.lower()
 
     signals.injection = any(m in lowered for m in INJECTION_MARKERS)
-    signals.clinical_urgent = any(re.search(p, lowered) for p in URGENT_PATTERNS)
-    signals.medical_advice = not signals.clinical_urgent and any(
-        re.search(p, lowered) for p in ADVICE_PATTERNS
+
+    # H-3: urgency is conjunctive and context-aware (see clinical_urgency).
+    # A triage question ("kya mujhe hospital jaana chahiye") is not an emergency
+    # but must still reach a human, so it escalates as medical_advice.
+    urgent, triage = detect_clinical_urgency(turn)
+    signals.clinical_urgent = urgent
+    signals.medical_advice = not urgent and (
+        triage or any(re.search(p, lowered) for p in ADVICE_PATTERNS)
     )
 
     signals.intent = _extract_intent(lowered)

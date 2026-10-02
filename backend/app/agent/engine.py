@@ -41,6 +41,13 @@ from app.tools import (
 
 WEEKDAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
+# One escalation summary per third-party authorization failure, shared by every
+# action path so the same refusal always reports the same reason and wording.
+TARGET_ESCALATION_SUMMARIES = {
+    "ambiguous_patient": "Mentioned patient name matches more than one record",
+    "not_authorised": "Caller is not authorised to act on the mentioned record",
+}
+
 
 def date_to_str(d) -> str:
     return d.strftime("%Y-%m-%d")
@@ -67,9 +74,17 @@ class ConversationEngine:
         state = ConversationState(conversation_id=conversation_id, today=today)
         for turn_index, turn in enumerate(turns):
             state.current_turn_index = turn_index
+            if state.escalated:
+                break  # already handed to a human; nothing may change that
             if state.finished:
-                if state.escalated or state.action_done:
-                    break  # escalation/refusal/action ends the conversation
+                # The scheduling flow is closed, but SAFETY never is: every later
+                # caller turn still passes the injection / clinical-urgency /
+                # medical-advice pre-check. A completed booking must never be
+                # able to silence a later emergency (C-1). The pre-check can
+                # escalate or refuse, but no further mutation is ever reachable
+                # here — the normal pipeline is skipped for this turn.
+                self._safety_precheck(state, understand(turn))
+                continue
             self._process_turn(state, turn)
         return self._finalize(state)
 
@@ -84,16 +99,7 @@ class ConversationEngine:
                 self._merge_proposal(state, proposal.fields)
 
         # 1. SAFETY PRE-CHECK — before identity, before any tool work
-        if signals.injection:
-            self._refuse(state)
-            return
-        if signals.clinical_urgent:
-            self._escalate(state, "clinical_urgent",
-                           summary="Caller describes symptoms needing a clinician now")
-            return
-        if signals.medical_advice:
-            self._escalate(state, "medical_advice",
-                           summary="Caller asks for clinical judgement the desk cannot give")
+        if self._safety_precheck(state, signals):
             return
 
         # 2. empty/noise turn with nothing under way
@@ -115,6 +121,32 @@ class ConversationEngine:
         # 6. act when enough validated information is present
         if not state.finished:
             self._maybe_act(state)
+
+    def _safety_precheck(self, state: ConversationState, signals: TurnSignals) -> bool:
+        """Injection / clinical-urgency / medical-advice gate.
+
+        Runs on EVERY caller turn, including turns that arrive after a normal
+        action already completed: a booked/cancelled/moved appointment must
+        never be able to silence a later emergency or injection attempt (C-1).
+        Returns True when the turn was consumed by safety, in which case the
+        caller must not process it any further.
+
+        An escalation or refusal here OVERRIDES a previously completed normal
+        flow: the completed action is dropped from the outcome so the response
+        reports the safety state instead of claiming a booking.
+        """
+        if signals.injection:
+            self._refuse(state)
+            return True
+        if signals.clinical_urgent:
+            self._escalate(state, "clinical_urgent",
+                           summary="Caller describes symptoms needing a clinician now")
+            return True
+        if signals.medical_advice:
+            self._escalate(state, "medical_advice",
+                           summary="Caller asks for clinical judgement the desk cannot give")
+            return True
+        return False
 
     # ------------------------------------------------------------------ model proposals
 
@@ -151,6 +183,8 @@ class ConversationEngine:
         if signals.target_name:
             state.target_name = signals.target_name
             state.target_patient_id = None  # re-resolve on new mention
+            state.target_match_count = 0
+            state.existing_appointment_id = None  # the earlier target's appointment
             state.target_mentioned = True
         if signals.mentions_dependent:
             state.target_mentioned = True
@@ -201,10 +235,13 @@ class ConversationEngine:
                         candidates = [{"patient_id": matches[0]}]
 
         if len(candidates) != 1:
+            state.target_match_count = len(candidates)
             return  # zero or several: stays unresolved; guards fail closed
+        state.target_match_count = 1
         target_id = candidates[0]["patient_id"]
         target = self.clinic.get_patient(target_id)
         if target is None:
+            state.target_match_count = 0
             return
         # Authorization: listed guardian only. Never "shares the caller's
         # phone" — clinic.json's Sanjay/Kavita Rawat pair shares a phone
@@ -372,13 +409,40 @@ class ConversationEngine:
             state.chosen_slot = start
         # failure: stay unfinished; finalize decides
 
+    # ------------------------------------------------------------------ target authorization
+
+    def _authorized_target(self, state: ConversationState) -> tuple[str | None, str | None]:
+        """(subject_patient_id, escalation_reason) for the patient an action concerns.
+
+        One rule shared by every action that can carry a third-party target:
+        - a resolved target is used as-is (resolution already proved guardian authority);
+        - a name matching several records is ambiguous_patient;
+        - an unknown, unnamed-dependent, or unauthorized target is not_authorised.
+
+        A third-party mention NEVER falls back to the caller's own record.
+        """
+        if state.target_patient_id is not None:
+            return state.target_patient_id, None
+        if state.target_match_count > 1:
+            return None, "ambiguous_patient"
+        return None, "not_authorised"
+
     # ------------------------------------------------------------------ reschedule
 
     def _try_reschedule(self, state: ConversationState) -> None:
         if state.actor.patient_id is None:
             return
+        # cv_0009 parity: a mentioned third party must NEVER become the caller's
+        # own appointment. Resolve WHO is being rescheduled before looking up
+        # any appointment, and escalate rather than substituting the caller.
+        subject = state.actor.patient_id
+        if state.target_mentioned:
+            subject, reason = self._authorized_target(state)
+            if reason is not None:
+                self._escalate(state, reason, summary=TARGET_ESCALATION_SUMMARIES[reason])
+                return
         if state.existing_appointment_id is None:
-            state.existing_appointment_id = self._find_appointment(state)
+            state.existing_appointment_id = self._find_appointment(state, subject)
             if state.existing_appointment_id is None:
                 return
         if not state.date:
@@ -407,19 +471,20 @@ class ConversationEngine:
         if candidates:
             self._reschedule(state, state.existing_appointment_id, doctor_id, state.date, candidates[0])
 
-    def _find_appointment(self, state: ConversationState) -> str | None:
-        """The caller's (or target's) booked appointment.
+    def _find_appointment(self, state: ConversationState, subject_patient_id: str | None) -> str | None:
+        """The subject patient's booked appointment (the caller's own, or the
+        authorized target's) — `subject_patient_id` is resolved and authorized
+        by the caller, and there is deliberately NO fallback to the actor here.
 
         NOTE: state.date is the TARGET date for a reschedule, not the existing
         appointment's date, so the search is not filtered by it. Preference:
         today's appointment first (cv_0003 'aaj ka'), then the earliest.
         """
-        patient_id = state.target_patient_id or state.actor.patient_id
-        if patient_id is None:
+        if subject_patient_id is None:
             return None
         candidates = [
             a for a in self.store.all_appointments()
-            if a["patient_id"] == patient_id and a["status"] == "booked"
+            if a["patient_id"] == subject_patient_id and a["status"] == "booked"
         ]
         if not candidates:
             return None
@@ -452,18 +517,15 @@ class ConversationEngine:
         # cv_0009: a third-party mention must NOT become the caller's own
         # appointment: if the caller mentioned another person's name and is
         # not an authorized guardian of that person, escalate immediately.
+        subject = state.actor.patient_id
         if state.target_name:
-            authorized = (
-                state.target_patient_id is not None
-                and guardian_check(self.clinic, state.actor.patient_id, state.target_patient_id)
-            )
-            if not authorized:
-                self._escalate(state, "not_authorised",
-                               summary="Caller is not authorised to act on the mentioned record")
+            subject, reason = self._authorized_target(state)
+            if reason is not None:
+                self._escalate(state, reason, summary=TARGET_ESCALATION_SUMMARIES[reason])
                 return
 
         if state.existing_appointment_id is None:
-            state.existing_appointment_id = self._find_appointment(state)
+            state.existing_appointment_id = self._find_appointment(state, subject)
             if state.existing_appointment_id is None:
                 return
 
@@ -488,11 +550,24 @@ class ConversationEngine:
 
     # ------------------------------------------------------------------ outcomes
 
+    def _clear_completed_action(self, state: ConversationState) -> None:
+        """Drop the normal-flow outcome so a safety override never reports it.
+
+        The mutation itself already happened and stays recorded in the store and
+        in the tool trace; what is withdrawn is the *claim* that this run ended
+        in a completed normal action.
+        """
+        state.chosen_slot = None
+        state.appointment_id = None
+        state.final_patient_id = None
+        state.existing_appointment_id = None
+
     def _refuse(self, state: ConversationState) -> None:
         state.escalated = False
         state.escalation_reason = None
         state.injection_seen = True
         state.action_done = "refused"
+        self._clear_completed_action(state)
         state.reply = "Main sirf appointment booking, rescheduling aur cancellation mein madad kar sakta hoon."
         # cv_0014: no tool calls at all — not even escalate_to_human.
 
@@ -504,6 +579,7 @@ class ConversationEngine:
             state.escalated = True
             state.escalation_reason = reason
             state.action_done = None
+            self._clear_completed_action(state)
 
     def _finalize(self, state: ConversationState) -> dict[str, Any]:
         reply = state.reply

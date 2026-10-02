@@ -26,6 +26,48 @@ def _clinic_data_env(monkeypatch):
     """Point the app's default clinic data at the bundled fixture for every test."""
     monkeypatch.setenv("CLINIC_JSON_PATH", str(CLINIC_JSON))
 
+
+# --------------------------------------------------- dashboard auth (H-2)
+#
+# Synthetic throwaway values. These are not credentials: no deployment, no
+# local run and no live host uses them, and nothing here is a real secret. They
+# exist only so the session flow can be exercised end to end in tests.
+DASHBOARD_TEST_USERNAME = "dashboard-test-user"
+DASHBOARD_TEST_PASSWORD = "test-only-password-not-a-secret"
+DASHBOARD_TEST_SECRET = "test-only-session-secret-not-a-secret"
+
+
+@pytest.fixture(autouse=True)
+def _dashboard_auth_env(monkeypatch):
+    """Configure dashboard auth for every test and isolate sessions between them."""
+    import app.dashboard_auth as dashboard_auth
+
+    monkeypatch.setenv("DASHBOARD_ADMIN_USERNAME", DASHBOARD_TEST_USERNAME)
+    monkeypatch.setenv("DASHBOARD_ADMIN_PASSWORD", DASHBOARD_TEST_PASSWORD)
+    monkeypatch.setenv("DASHBOARD_SESSION_SECRET", DASHBOARD_TEST_SECRET)
+    # Keep the Secure flag off: the ASGI test client speaks plain http.
+    monkeypatch.setenv("DASHBOARD_ENV", "development")
+    dashboard_auth.reset_sessions()
+    yield
+    dashboard_auth.reset_sessions()
+
+
+def login_to_dashboard(client, username: str | None = None, password: str | None = None):
+    """Log a TestClient in and assert it worked.
+
+    The session cookie is stored on the TestClient itself, so every later request
+    made by the same client is authenticated.
+    """
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": DASHBOARD_TEST_USERNAME if username is None else username,
+            "password": DASHBOARD_TEST_PASSWORD if password is None else password,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response
+
 # Explicit dates only — mirrors the assignment rule: never the system clock.
 TODAY = "2026-10-01"  # Thursday
 THURSDAY = TODAY

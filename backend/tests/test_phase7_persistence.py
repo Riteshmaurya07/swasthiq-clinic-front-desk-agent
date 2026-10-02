@@ -22,6 +22,7 @@ from app.persistence import (
     ToolCallRepository,
     connect,
 )
+from conftest import login_to_dashboard
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 ADVERSARIAL_DIR = REPO_ROOT / "adversarial"
@@ -43,12 +44,18 @@ def load_script(conversation_id: str) -> dict:
 
 @pytest.fixture()
 def client(app_db: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-    """TestClient wired to a throwaway application DB + bundled clinic fixture."""
+    """TestClient wired to a throwaway application DB + bundled clinic fixture.
+
+    Signed in to the dashboard: the read APIs under test require a session
+    since the H-2 remediation, and every assertion below is about the *data*
+    behaviour, which must be unchanged by authentication.
+    """
     import app.main as main_module
 
     monkeypatch.setattr(main_module, "DATABASE_PATH", app_db)
     monkeypatch.setenv("CLINIC_JSON_PATH", str(CLINIC_FIXTURE))
     with TestClient(main_module.app) as test_client:
+        login_to_dashboard(test_client)
         yield test_client
 
 

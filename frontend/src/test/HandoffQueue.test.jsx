@@ -5,9 +5,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import App from "@/App"
 import { ApiError } from "@/lib/api"
-import { conversationsFixture, handoffsFixture, mockApi, statsFixture } from "./fixtures"
+import { conversationsFixture, handoffsFixture, mockApi, mockSession, statsFixture } from "./fixtures"
 
 let api
+let session
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal()
@@ -17,11 +18,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchHandoffStats: vi.fn(() => api.get("/api/handoffs/stats")),
     fetchConversations: vi.fn(() => api.get("/api/conversations")),
     resolveHandoff: vi.fn((id) => api.patch(`/api/handoffs/${id}/resolve`)),
+    // H-2: the dashboard is session-gated, so the app checks /api/auth/me first.
+    fetchSession: vi.fn(() => session.me()),
+    login: vi.fn((u, p) => session.login(u, p)),
+    logout: vi.fn(() => session.logout()),
   }
 })
 
 beforeEach(() => {
   api = mockApi()
+  session = mockSession()
+  session.signIn() // these tests describe the post-login dashboard
   vi.clearAllMocks()
 })
 
@@ -34,16 +41,17 @@ function renderQueue() {
 }
 
 describe("shared sidebar", () => {
-  it("renders the sidebar with clinic identity and navigation", () => {
+  it("renders the sidebar with clinic identity and navigation", async () => {
     renderQueue()
-    expect(screen.getByText("Swasthiq Desk")).toBeInTheDocument()
+    // The session check resolves before the protected layout mounts (H-2).
+    expect(await screen.findByText("Swasthiq Desk")).toBeInTheDocument()
     expect(screen.getByText("Sunrise Clinic, Dehradun")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /handoff queue/i })).toBeInTheDocument()
   })
 
-  it("marks the handoff nav item active on /handoffs", () => {
+  it("marks the handoff nav item active on /handoffs", async () => {
     renderQueue()
-    const button = screen.getByRole("link", { name: /handoff queue/i })
+    const button = await screen.findByRole("link", { name: /handoff queue/i })
     expect(button.closest("[data-sidebar='menu-button']")).toHaveAttribute(
       "data-active",
       "true",

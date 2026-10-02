@@ -28,13 +28,23 @@ _BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, field_validator
 
 from app.agent.engine import ConversationEngine
 from app.clinic import load_clinic, ClinicDataUnavailable
+from app.dashboard_auth import (
+    COOKIE_NAME,
+    auth_configured,
+    clear_session_cookie,
+    create_session,
+    destroy_session,
+    require_dashboard_session,
+    set_session_cookie,
+    verify_credentials,
+)
 from app.errors import ToolResult
 from app.persistence import (
     ConversationRecord,
@@ -60,6 +70,12 @@ app = FastAPI(title="Swasthiq Clinic Front Desk Agent", version="1.0.0")
 # set BACKEND_CORS_ORIGINS (comma-separated, e.g. the deployed frontend origin).
 # Never "*": the dashboard relies on origin-scoped responses. Read endpoints
 # only need GET/PATCH; nothing here weakens the /agent/run evaluator contract.
+#
+# Credentials are enabled because the dashboard now authenticates with an
+# HttpOnly session cookie, which the browser will not attach to a cross-origin
+# request unless the server opts in. That is safe only while the origin list
+# stays explicit — a wildcard plus credentials would be rejected by the browser
+# anyway, and would defeat the point.
 _local_origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -72,8 +88,9 @@ _extra_origins = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_local_origins + _extra_origins,
-    allow_methods=["GET", "PATCH"],
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Content-Type"],
+    allow_credentials=True,
 )
 
 CLINIC_JSON_PATH = None  # default: the supplied starter-pack file
@@ -310,6 +327,76 @@ def health() -> dict[str, Any]:
     return {"status": "ok", "persistence_failures": PERSISTENCE_FAILURES}
 
 
+# ------------------------------------------------------ dashboard auth (H-2)
+#
+# The dashboard read/write APIs below expose patient identities, transcripts and
+# the clinical handoff queue, so they require a session issued here. The public
+# evaluator endpoints (POST /agent/run, GET /health) are deliberately excluded.
+
+
+class DashboardLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+@app.post("/api/auth/login")
+def dashboard_login(payload: DashboardLoginRequest) -> Response:
+    """Exchange environment-configured credentials for a session cookie.
+
+    The response body echoes nothing back at all — not the username, not the
+    password, not the session id, not the secret — and nothing about either
+    credential is written to the log, so an operator learns that a login failed
+    but never who tried or with what.
+    """
+    if not auth_configured():
+        return JSONResponse(
+            status_code=503,
+            content={
+                "error": "dashboard_auth_not_configured",
+                "message": (
+                    "Dashboard authentication is not configured on this server."
+                ),
+            },
+        )
+    if not verify_credentials(payload.username, payload.password):
+        logger.warning("dashboard login rejected: invalid credentials")
+        return JSONResponse(
+            status_code=401,
+            content={"error": "invalid_credentials", "message": "Invalid username or password."},
+        )
+    cookie_value = create_session()
+    response = JSONResponse(
+        status_code=200,
+        content={"authenticated": True},
+    )
+    set_session_cookie(response, cookie_value)
+    return response
+
+
+@app.post("/api/auth/logout")
+def dashboard_logout(request: Request) -> Response:
+    """Invalidate the session server-side and expire the cookie.
+
+    Idempotent: an absent or already-invalid session still returns 200 with the
+    cookie cleared, so the client never has to distinguish the two cases.
+    """
+    destroy_session(request.cookies.get(COOKIE_NAME))
+    response = JSONResponse(status_code=200, content={"authenticated": False})
+    clear_session_cookie(response)
+    return response
+
+
+@app.get("/api/auth/me")
+def dashboard_me(_session: None = Depends(require_dashboard_session)) -> dict[str, Any]:
+    """Report that a valid session exists. 401 when there is not one.
+
+    Reports authentication state only. It deliberately does not name the
+    signed-in operator: the session is a bearer capability, so the configured
+    username is never echoed into a response body or into the browser.
+    """
+    return {"authenticated": True}
+
+
 # ------------------------------------------------------------------ read APIs (Phase 7)
 
 def _conversation_detail(record: ConversationRecord, conn: sqlite3.Connection) -> dict[str, Any]:
@@ -338,7 +425,9 @@ def _conversation_detail(record: ConversationRecord, conn: sqlite3.Connection) -
 
 
 @app.get("/api/conversations")
-def list_conversations() -> dict[str, Any]:
+def list_conversations(
+    _session: None = Depends(require_dashboard_session),
+) -> dict[str, Any]:
     conn = _get_conn()
     try:
         records = ConversationRepository(conn).list()
@@ -362,7 +451,10 @@ def list_conversations() -> dict[str, Any]:
 
 
 @app.get("/api/conversations/{conversation_id}")
-def get_conversation(conversation_id: str) -> dict[str, Any]:
+def get_conversation(
+    conversation_id: str,
+    _session: None = Depends(require_dashboard_session),
+) -> dict[str, Any]:
     conn = _get_conn()
     try:
         record = ConversationRepository(conn).get(conversation_id)
@@ -374,7 +466,10 @@ def get_conversation(conversation_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/handoffs")
-def list_handoffs(status: str | None = None) -> dict[str, Any]:
+def list_handoffs(
+    status: str | None = None,
+    _session: None = Depends(require_dashboard_session),
+) -> dict[str, Any]:
     if status is not None and status not in ("open", "resolved"):
         raise HTTPException(status_code=422, detail="status must be 'open' or 'resolved'")
     conn = _get_conn()
@@ -398,7 +493,9 @@ def list_handoffs(status: str | None = None) -> dict[str, Any]:
 
 
 @app.get("/api/handoffs/stats")
-def handoff_stats() -> dict[str, int]:
+def handoff_stats(
+    _session: None = Depends(require_dashboard_session),
+) -> dict[str, int]:
     conn = _get_conn()
     try:
         return HandoffRepository(conn).stats()
@@ -411,7 +508,11 @@ class HandoffResolveRequest(BaseModel):
 
 
 @app.patch("/api/handoffs/{conversation_id}/resolve")
-def resolve_handoff(conversation_id: str, request: HandoffResolveRequest | None = None) -> dict[str, Any]:
+def resolve_handoff(
+    conversation_id: str,
+    request: HandoffResolveRequest | None = None,
+    _session: None = Depends(require_dashboard_session),
+) -> dict[str, Any]:
     conn = _get_conn()
     try:
         resolved = HandoffRepository(conn).resolve(conversation_id)

@@ -238,13 +238,19 @@ def set_session_cookie(response: Response, cookie_value: str) -> None:
         max_age=session_ttl_seconds(),
         httponly=True,
         secure=cookie_secure(),
-        samesite="lax",
+        samesite="none" if cookie_secure() else "lax",
         path="/",
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=COOKIE_NAME, path="/", httponly=True, samesite="lax")
+    response.delete_cookie(
+        key=COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="none" if cookie_secure() else "lax",
+        secure=cookie_secure(),
+    )
 
 
 # -------------------------------------------------------------- dependency

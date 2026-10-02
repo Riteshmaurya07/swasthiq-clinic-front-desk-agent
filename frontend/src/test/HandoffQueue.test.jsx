@@ -5,10 +5,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import App from "@/App"
 import { ApiError } from "@/lib/api"
-import { conversationsFixture, handoffsFixture, mockApi, mockSession, statsFixture } from "./fixtures"
+import { conversationsFixture, handoffsFixture, mockApi, statsFixture } from "./fixtures"
 
 let api
-let session
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal()
@@ -18,17 +17,11 @@ vi.mock("@/lib/api", async (importOriginal) => {
     fetchHandoffStats: vi.fn(() => api.get("/api/handoffs/stats")),
     fetchConversations: vi.fn(() => api.get("/api/conversations")),
     resolveHandoff: vi.fn((id) => api.patch(`/api/handoffs/${id}/resolve`)),
-    // H-2: the dashboard is session-gated, so the app checks /api/auth/me first.
-    fetchSession: vi.fn(() => session.me()),
-    login: vi.fn((u, p) => session.login(u, p)),
-    logout: vi.fn(() => session.logout()),
   }
 })
 
 beforeEach(() => {
   api = mockApi()
-  session = mockSession()
-  session.signIn() // these tests describe the post-login dashboard
   vi.clearAllMocks()
 })
 
@@ -43,7 +36,6 @@ function renderQueue() {
 describe("shared sidebar", () => {
   it("renders the sidebar with clinic identity and navigation", async () => {
     renderQueue()
-    // The session check resolves before the protected layout mounts (H-2).
     expect(await screen.findByText("Swasthiq Desk")).toBeInTheDocument()
     expect(screen.getByText("Sunrise Clinic, Dehradun")).toBeInTheDocument()
     expect(screen.getByRole("link", { name: /handoff queue/i })).toBeInTheDocument()
@@ -67,7 +59,7 @@ describe("handoff stats", () => {
       (card) => card.querySelector(".text-3xl").textContent,
     )
     // conversations | completed | escalated | urgent — all from real API data
-    expect(values).toEqual(["6", "2", "4", "1"])
+    expect(values).toEqual(["6", "2", "6", "1"])
     expect(screen.getByText("33% of conversations")).toBeInTheDocument()
     expect(screen.getByText("2 still open")).toBeInTheDocument()
     expect(screen.getByText("clinical, unresolved")).toBeInTheDocument()

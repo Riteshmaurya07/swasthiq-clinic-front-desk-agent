@@ -1,7 +1,6 @@
 import { useLocation,Link } from "react-router-dom"
 import { LogOut, MessageSquareText, Stethoscope } from "lucide-react"
 
-import { useDashboardSession } from "@/components/auth/DashboardSession"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -27,7 +26,6 @@ const NAV_ITEMS = [
  */
 export function AppSidebar() {
   const location = useLocation()
-  const { signOut } = useDashboardSession()
 
   return (
     <Sidebar collapsible="offcanvas">
@@ -71,21 +69,6 @@ export function AppSidebar() {
         <Badge variant="outline" className="text-[10px] font-medium tracking-wide text-muted-foreground">
           Deterministic agent · No LLM
         </Badge>
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-muted-foreground" data-testid="session-state">
-            Signed in
-          </span>
-          <Button
-            variant="ghost"
-            size="xs"
-            onClick={signOut}
-            data-testid="sign-out"
-            className="text-muted-foreground"
-          >
-            <LogOut />
-            Sign out
-          </Button>
-        </div>
       </div>
     </Sidebar>
   )

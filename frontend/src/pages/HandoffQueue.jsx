@@ -20,7 +20,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { ApiError, fetchConversations, fetchHandoffStats, fetchHandoffs, resolveHandoff } from "@/lib/api"
-import { useDashboardSession } from "@/components/auth/DashboardSession"
 import { useAsync } from "@/hooks/useApi"
 import { CircleCheckBig, TriangleAlert } from "lucide-react"
 
@@ -84,7 +83,6 @@ const COMPLETED_STATES = new Set(["booked", "rescheduled", "cancelled"])
  */
 function StatsGrid({ conversationCount, conversationStates, stats, openHandoffs }) {
   const completed = conversationStates.filter((s) => COMPLETED_STATES.has(s)).length
-  const escalated = conversationStates.filter((s) => s === "escalated").length
   const pct = conversationCount > 0 ? Math.round((completed / conversationCount) * 100) : 0
   const urgent = openHandoffs.filter((h) => h.escalation_reason === "clinical_urgent").length
 
@@ -98,7 +96,7 @@ function StatsGrid({ conversationCount, conversationStates, stats, openHandoffs 
       />
       <HandoffStatCard
         label="Escalated"
-        value={escalated || stats.total}
+        value={stats.total}
         note={`${stats.open} still open`}
         noteClass="text-blue-600"
       />
@@ -131,12 +129,9 @@ function EmptyQueue() {
 export function HandoffQueuePage() {
   const [resolvingId, setResolvingId] = useState(null)
   const [resolveError, setResolveError] = useState(null)
-  // A 401 anywhere below means the session ended: hand it back to the provider
-  // so the operator lands on the sign-in screen instead of a dead queue.
-  const { guard } = useDashboardSession()
-  const handoffs = useAsync(() => fetchHandoffs("open"), [], guard)
-  const stats = useAsync(() => fetchHandoffStats(), [], guard)
-  const conversations = useAsync(() => fetchConversations(), [], guard)
+  const handoffs = useAsync(() => fetchHandoffs("open"), [])
+  const stats = useAsync(() => fetchHandoffStats(), [])
+  const conversations = useAsync(() => fetchConversations(), [])
 
   const openCount = useMemo(
     () => handoffs.data?.handoffs.length ?? stats.data?.open ?? 0,
@@ -154,7 +149,6 @@ export function HandoffQueuePage() {
       }
       await Promise.all([handoffs.refetch(), stats.refetch(), conversations.refetch()])
     } catch (error) {
-      guard(error)
       setResolveError(
         error instanceof ApiError && error.status === 404
           ? "This handoff no longer exists. The list has been refreshed."

@@ -176,9 +176,9 @@ Every significant ambiguity and implementation decision, with the reasoning. For
 
 **Problem:** The Vite dev server needs cross-origin API access.
 **Decision:** Allow only `http://(localhost|127.0.0.1):5173` plus any origin listed in `BACKEND_CORS_ORIGINS`, methods GET+POST+PATCH, header Content-Type only. `/agent/run` (POST) is unaffected.
-**Reason:** Minimal surface; production would restrict further. POST was added for `POST /api/auth/login` (see #24) — it was not needed before, because the dashboard was read-only apart from resolve.
+**Reason:** Minimal surface; production would restrict further.
 **Alternative:** Allow all origins in dev.
-**Tradeoff:** Adding a new frontend origin requires a one-line change; safer default. Credentials are enabled for the session cookie (#24), so this allowlist is now a security boundary, not just a convenience.
+**Tradeoff:** Adding a new frontend origin requires a one-line change; safer default.
 
 ## 23. Context-aware emergency detection (H-3)
 
@@ -225,7 +225,7 @@ cannot be guaranteed to fail closed.
 than derived clinically. Accepted because determinism and fail-closed behaviour
 were judged more important than best-in-class classification.
 
-**Known limitations (see `H3_FIX_REPORT.md` for the full treatment):**
+**Known limitations:**
 - English coverage is thinner than Hindi/Hinglish coverage; there is no
   language-detection fallback, so unlisted English synonyms can still be missed.
 - Context gates are **positional windows** and single-level clause splitting, not
@@ -243,98 +243,6 @@ restating it. Corpus result: 37/40 realistic emergency phrasings detected
 route to `medical_advice`), 15/15 advice phrasings routed, 0 false-positive
 urgency on advice phrasings.
 
-## 24. Dashboard session authentication (H-2)
-
-**Problem:** The dashboard read/write APIs (`/api/conversations*`,
-`/api/handoffs*`) returned patient names, 10-digit phone numbers, full
-conversation transcripts and the clinical handoff queue with **no
-authentication whatsoever**, and `PATCH /api/handoffs/{id}/resolve` let anyone
-mutate clinical state. The audit found this on the previous deployment
-(`H2_STATUS_CHECK.md` confirms that host is still live), so the exposure is
-active, not hypothetical.
-
-**Decision:** Require a server-side session on all five dashboard routes, applied
-through one reusable FastAPI dependency `require_dashboard_session`
-(`backend/app/dashboard_auth.py`). Add `POST /api/auth/login`,
-`POST /api/auth/logout`, `GET /api/auth/me`. Credentials are read only from
-`DASHBOARD_ADMIN_USERNAME` / `DASHBOARD_ADMIN_PASSWORD`; the cookie is signed
-with `DASHBOARD_SESSION_SECRET`. The cookie is `HttpOnly`, `SameSite=Lax`,
-`Secure` in production, path-scoped and time-limited, and carries **only** a
-signed random session id plus an expiry — never the username, password or
-secret. No endpoint or response body ever names the operator. `POST /agent/run`
-and `GET /health` stay public.
-
-**Reason: a real login flow, not a key in the bundle.** The preferred design was
-specified explicitly and it is also the better engineering: a permanent secret in
-React would be readable by every visitor and would leak into the built asset.
-
-**Reason: opaque session id rather than a self-contained signed username.**
-A stateless token carrying the username would be simpler and restart-proof, but
-it would place the username in the client's cookie jar. The opaque id keeps the
-credential server-side, and keeping the id→expiry map in memory makes logout a
-real invalidation: a replayed cookie after logout is refused, which a purely
-stateless scheme cannot guarantee. Cost of that choice: sessions do not survive a
-restart or a multi-worker deploy.
-
-**Reason: the session carries no identity at all.** The registry maps a session id
-to an expiry and nothing else, and `require_dashboard_session` returns `None`, so
-`/api/auth/login` and `/api/auth/me` can only ever answer `{"authenticated": true}`.
-Echoing the operator's own username back after a successful password check is
-common practice and not technically a leak, but nothing in this UI needs it, and
-the brief for this work was explicit that the username must not reach frontend
-code. Dropping it removes the value from the response, from the browser and from
-the server's heap at no cost. The trade-off is that no action can be attributed to
-an operator, so there is no audit trail; if attribution is ever required,
-reintroduce identity deliberately rather than by accident.
-
-**Reason: fail closed when unconfigured.** If the three environment variables
-are missing, the dashboard answers `401` (and login answers `503`) instead of
-falling back to anonymous reads. A forgotten secret must never silently re-open
-the exposure that H-2 describes.
-
-**Reason: both credential comparisons always run.** `secrets.compare_digest`
-is used for username and password unconditionally, and the 401 body is identical
-for either failure, so the endpoint is not an oracle for which factor was wrong
-or who holds a valid username.
-
-**Reason: CORS now allows credentials, so the origin list must stay explicit.**
-The browser will not attach the cookie cross-origin unless the server opts in,
-which requires `allow_credentials`; that is safe only while origins are
-allowlisted. `*` remains forbidden (see #22) and is now doubly unsafe.
-
-**Alternative:** A bearer token hardcoded in the frontend. Rejected — it is
-extractable from the shipped bundle by anyone who loads the page.
-**Alternative:** OAuth/OIDC or a full user table. Rejected as disproportionate:
-this is one clinic administrator on one dashboard, and it would add a dependency
-and a migration to a deterministic no-service project (#17).
-**Alternative:** Network-level restriction only. Not sufficient as the sole
-control; it leaves the endpoints unauthenticated in the code and in any other
-environment.
-
-**Tradeoffs and limitations:**
-- Sessions are in-process, so a restart signs everyone out and a multi-worker
-  deployment would not share sessions. The fix is a shared store; documented
-  rather than built because this deployment is single-process.
-- **No login rate limiting or lockout** exists. A long random
-  `DASHBOARD_SESSION_SECRET` and a strong password are the only defences;
-  throttling is the recommended next step for an internet-facing host.
-- CSRF is mitigated by `SameSite=Lax` plus origin-allowlisted credentialed CORS
-  rather than by a separate token, which suits a same-site dashboard.
-
-Validated with 56 backend tests (`test_h2_dashboard_auth.py`), 6 CORS tests (3
-new, covering the credentialed allowlist, the POST preflight and the
-never-wildcard-with-credentials rule) and 19 frontend tests
-(`DashboardAuth.test.jsx`), plus a 41-assertion live-HTTP probe against
-`uvicorn` with production cookie flags. Coverage includes every dashboard route
-answering `401` without a session, replay-after-logout refusal, tampered/re-signed
-cookie rejection, expired-token and secret-rotation rejection, cookie attribute
-assertions in development and production, and checks that no credential or
-username value appears in any response body, cookie or log record. Four tests were
-mutation-checked to confirm they are not vacuous.
-
-**H-2 is not yet resolved.** This change is the remediation; it only takes effect
-once the code is deployed and the live host is re-verified. See `H2_FIX_REPORT.md`
-for the remaining deployment steps.
 
 ## 25. Known limitations
 
@@ -342,7 +250,6 @@ for the remaining deployment steps.
 - The deterministic parser covers implemented Hinglish/English patterns; unparseable input fails safe (abandoned/escalated), never guesses.
 - Emergency detection limitations are enumerated in #23.
 - Dashboard list endpoints cap at 200 records; no pagination.
-- Dashboard sessions are in-memory and have no login rate limiting (see #24).
 - `latency_ms` is machine-dependent.
 - Backend dependencies in `requirements.txt` are not version-pinned.
 - Escalation "Urgent" counter counts open `clinical_urgent` handoffs; `medical_advice` appears under Escalated.

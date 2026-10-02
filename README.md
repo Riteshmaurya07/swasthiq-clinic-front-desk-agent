@@ -79,8 +79,7 @@ backend/
     store.py            # per-request AppointmentStore (thread-safe, slot re-check on mutation)
     errors.py           # ToolResult / ToolError with machine-readable codes
     schemas.py          # contract constants (terminal states, escalation reasons)
-    main.py             # FastAPI: POST /agent/run + session-protected dashboard APIs + CORS
-    dashboard_auth.py   # H-2: signed HttpOnly session cookies, login/verify dependency
+    main.py             # FastAPI: POST /agent/run + dashboard APIs + CORS
     agent/
       engine.py         # conversation orchestration (deterministic)
       understanding.py  # Hinglish/English turn parser (regex/stateless)
@@ -93,8 +92,7 @@ backend/
     persistence/        # SQLite display layer (database, models, repositories, timeline)
   tests/                # 497 tests (synthetic fixture — no confidential data)
                         #   includes 117 H-3 emergency-detection regressions,
-                        #   30 C-1..C-4 red-team regressions, and
-                        #   53 H-2 dashboard-authentication regressions
+                        #   30 C-1..C-4 red-team regressions
   tests/fixtures/clinic_fixture.json   # bundled synthetic clinic data
   data/app.db           # created lazily at runtime (gitignored)
 frontend/
@@ -102,9 +100,8 @@ frontend/
     api → lib/api.ts    # central API client (VITE_API_BASE_URL)
     components/ui/      # shadcn/ui components
     components/layout/  # AppSidebar (shared across routes)
-    components/auth/    # DashboardSession provider (session gate)
     components/handoffs/ components/conversation/
-    pages/              # HandoffQueue, ConversationDetail, Login
+    pages/              # HandoffQueue, ConversationDetail
     test/               # 41 vitest tests + API-shaped fixtures
 adversarial/           # 8 adversarial scripts (authored by us, schema.md format)
 ```
@@ -132,15 +129,7 @@ pip install fastapi uvicorn pytest httpx
 # PowerShell:      $env:CLINIC_JSON_PATH = "path\to\clinic.json"
 # bash/Git Bash:   export CLINIC_JSON_PATH=/path/to/clinic.json
 
-# REQUIRED for the dashboard: set the administrator credentials and the cookie
-# signing key. Choose your own values — never commit them, never reuse the
-# placeholders in .env.example. Without all three the dashboard is LOCKED
-# (every /api/* call answers 401), while /agent/run and /health still work.
-# PowerShell:
-#   $env:DASHBOARD_ADMIN_USERNAME = "<your-admin-username>"
-#   $env:DASHBOARD_ADMIN_PASSWORD = "<your-admin-password>"
-#   $env:DASHBOARD_SESSION_SECRET  = "<long-random-string>"
-# bash/Git Bash: export DASHBOARD_ADMIN_USERNAME=... DASHBOARD_ADMIN_PASSWORD=... DASHBOARD_SESSION_SECRET=...
+
 
 # start the API — MUST be run from the repository root, because the app
 # module path is backend.app.main:app
@@ -155,10 +144,7 @@ Without `CLINIC_JSON_PATH`, `POST /agent/run` returns a clean error explaining t
 
 `backend/data/app.db` is created automatically on first request; delete it to reset dashboard data.
 
-**Dashboard sign-in.** The dashboard at `http://localhost:5173/handoffs` shows a
-sign-in screen first. Use the `DASHBOARD_ADMIN_USERNAME` /
-`DASHBOARD_ADMIN_PASSWORD` you set above. The password is never stored in the
-browser; the server answers with an `HttpOnly` session cookie.
+
 
 ## Frontend setup (fresh clone)
 
@@ -197,87 +183,22 @@ Malformed requests → 4xx (never repaired). Internal corruption → fail-closed
 
 ## Dashboard API endpoints
 
-The dashboard read/write APIs expose patient identities, phone numbers,
-conversation transcripts and the clinical handoff queue, so **every one of them
-requires an authenticated dashboard session**. Unauthenticated requests are
-rejected with `401` before any data is read from the database.
-
-| Endpoint | Purpose | Auth |
-|---|---|---|
-| `POST /api/auth/login` | exchange credentials for a session cookie | public (this is the way in) |
-| `POST /api/auth/logout` | invalidate the session and clear the cookie | idempotent |
-| `GET /api/auth/me` | report the signed-in administrator; `401` if none | session |
-| `GET /api/conversations` | stored conversations (newest first) | **session** |
-| `GET /api/conversations/{id}` | full detail: transcript, ordered tool_calls, outcome, metrics; 404 if unknown | **session** |
-| `GET /api/handoffs?status=open\|resolved` | handoff queue rows | **session** |
-| `GET /api/handoffs/stats` | `{total, open, resolved}` | **session** |
-| `PATCH /api/handoffs/{id}/resolve` | deterministic open→resolved; idempotent; 404 unknown | **session** |
-| `POST /agent/run` | the public conversational API | **public** |
-| `GET /health` | liveness + persistence-failure counter | **public** |
-
-### Dashboard authentication
-
-This exists because of audit finding **H-2**: on a previous deployment these
-routes had no authentication at all, so anyone who could reach the host could
-read transcripts and resolve clinical handoffs.
-
-**Credentials come from the environment only** — never from source, the
-frontend bundle, a committed file, or a build-time variable:
-
-| Variable | Purpose |
+| Endpoint | Purpose |
 |---|---|
-| `DASHBOARD_ADMIN_USERNAME` | the dashboard administrator's username |
-| `DASHBOARD_ADMIN_PASSWORD` | the dashboard administrator's password |
-| `DASHBOARD_SESSION_SECRET` | HMAC key that signs the session cookie |
-| `DASHBOARD_ENV` | `production` turns on the `Secure` cookie attribute |
-| `DASHBOARD_SESSION_TTL_SECONDS` | session lifetime (default `28800` = 8 hours) |
-| `DASHBOARD_COOKIE_SECURE` | force the `Secure` attribute on or off |
+| `GET /api/conversations` | stored conversations (newest first) |
+| `GET /api/conversations/{id}` | full detail: transcript, ordered tool_calls, outcome, metrics; 404 if unknown |
+| `GET /api/handoffs?status=open\|resolved` | handoff queue rows |
+| `GET /api/handoffs/stats` | `{total, open, resolved}` |
+| `PATCH /api/handoffs/{id}/resolve` | deterministic open→resolved; idempotent; 404 unknown |
+| `POST /agent/run` | the public conversational API |
+| `GET /health` | liveness + persistence-failure counter |
 
-If those three required variables are unset the server **fails closed**: the
-dashboard answers `401` (and `POST /api/auth/login` answers `503`) rather than
-falling back to anonymous reads. `.env.example` documents the variables with
-empty values; real values belong in the deployment platform's secret store.
 
-**Session design.** Login compares both credentials with
-`secrets.compare_digest`, then issues a random opaque session id. The cookie
-carries **only** that signed id and an expiry — never the username, the password
-or the session secret — and the id→username mapping is held server-side, which
-is what makes logout a real invalidation. The cookie is `HttpOnly`,
-`SameSite=Lax`, `Secure` in production, scoped to `/`, and expires after the
-configured TTL. The signature is HMAC-SHA256 over the token, so an edited,
-forged or re-signed cookie is rejected before any lookup. Frontend code never
-sees the token: it is `HttpOnly`, and requests are sent with
-`credentials: "include"` so the browser replays it.
-
-`require_dashboard_session` (`backend/app/dashboard_auth.py`) is the reusable
-FastAPI dependency applied to all five dashboard routes.
-
-The dashboard React app mirrors this: it checks `GET /api/auth/me` on mount,
-renders a sign-in screen when there is no session, keeps the password in
-component state for the duration of the submit only (never localStorage,
-sessionStorage or the URL), and returns to the login screen on any `401` — an
-expired session lands on sign-in rather than a broken queue. `POST /agent/run`
-and `GET /health` remain unauthenticated so the public conversational contract
-is untouched.
 
 ### Production deployment requirements
 
-Dashboard authentication is **not configurable by default in a fresh checkout**:
-the three variables are unset, so the dashboard is locked rather than exposed. A
-deployment **must** set them to make it usable — they cannot be left off, because
-the server fails closed without them:
-
-- `DASHBOARD_ADMIN_USERNAME`, `DASHBOARD_ADMIN_PASSWORD`,
-  `DASHBOARD_SESSION_SECRET` — set all three in the platform's secret store.
-- `DASHBOARD_SESSION_SECRET` must be a long random string; rotate it to
-  invalidate every issued session.
-- Serve over HTTPS. `Secure` is added automatically when `DASHBOARD_ENV=production`
-  or a recognised PaaS variable (`RENDER`, `VERCEL`, …) is present.
-- Set `BACKEND_CORS_ORIGINS` to the deployed frontend origin. Credentials are
-  allowed, so the origin list must stay explicit — never `*`.
-
-See `H2_FIX_REPORT.md` for the remediation, and `H2_STATUS_CHECK.md` for the
-status of the previous deployment.
+- Serve over HTTPS.
+- Set `BACKEND_CORS_ORIGINS` to the deployed frontend origin. The origin list must stay explicit — never `*`.
 
 ## The six deterministic tools
 
@@ -304,8 +225,7 @@ Per-turn, **before** identity or any tool work:
 The same safety check runs again after every turn completes, so an emergency
 arriving *after* a booking was already committed still overrides the outcome
 (terminal state becomes `escalated`, the already-recorded action stands, and
-nothing further may be scheduled). See `REDTEAM_FIX_REPORT.md` (C-1).
-
+nothing further may be scheduled).
 ### Context-aware emergency detection
 
 Emergency detection (`backend/app/agent/clinical_urgency.py`) is **not** a flat
@@ -350,8 +270,7 @@ When a real symptom appears in the same turn it takes precedence and the turn is
 overrides an already-completed action (C-1), an unnecessary emergency destroys a
 booking that was already correctly made. Suppressing a historical clause is the
 safer error, so the detector is tuned to favour precision where recall is
-ambiguous. See `H3_FIX_REPORT.md` for the full design, the corpus results, and
-the known limitations — English coverage is thinner than Hindi/Hinglish, the
+ambiguous. The known limitations are — English coverage is thinner than Hindi/Hinglish, the
 gates are positional windows rather than full syntactic parsing, and thresholds
 are corpus-tuned rather than clinically validated.
 
@@ -392,9 +311,7 @@ Counters from real stats, open-handoff table (caller said / reason badge / time 
 
 Persisted transcript with CALLER/TOOL/AGENT rows; tool calls rendered inline at their sequence position with expandable JSON arguments; machine-readable outcome panel including literal `null`s where the backend returned null and truthful metrics (tokens = 0, honestly labeled).
 
-## Dashboard sign-in
 
-Before either screen loads, the app resolves the session with `GET /api/auth/me`. With no valid session it renders a sign-in card instead of the dashboard — and issues **no** `/api/conversations*` or `/api/handoffs*` request at all. On success the layout is identical to the pre-H-2 dashboard, with the signed-in administrator and a sign-out control in the sidebar. Any `401` from any dashboard call (including a failed resolve) returns the operator to the sign-in screen rather than leaving a dead screen behind; non-401 failures keep the existing error states.
 
 ## shadcn/ui usage
 
@@ -450,15 +367,7 @@ cd frontend && npm run build
 - The dashboard list endpoints are bounded (200 newest conversations) without pagination.
 - `latency_ms` reflects the local machine; production numbers will differ.
 - Backend dependencies in `requirements.txt` are not version-pinned (the frontend lockfile is committed).
-- **Dashboard sessions are held in process memory** (`backend/app/dashboard_auth.py`), so a restart or a
-  multi-worker deployment makes every session invalid and operators must sign in again. The cookie itself
-  is signed and tamper-proof; only the id→username map is in memory. Scaling out would mean moving that
-  map to the SQLite store or a shared cache. Rotating `DASHBOARD_SESSION_SECRET` invalidates every session
-  at once, which is the intended kill switch.
-- There is **no login rate limiting or lockout** on `POST /api/auth/login`. A long random
-  `DASHBOARD_SESSION_SECRET` and a strong password are the only defences; adding throttling (and audit
-  logging of failed attempts that records no credentials) is the recommended next step for an
-  internet-facing deployment.
+
 - **Live deployment:** The dashboard is live at [https://frontend-omega-sable-e1wat5r269.vercel.app](https://frontend-omega-sable-e1wat5r269.vercel.app). The backend API is hosted at `https://swasthiq-clinic-front-desk-agent.onrender.com`.
 
 ## Deployment instructions
@@ -476,12 +385,7 @@ Any static host + Python host pair works; nothing exotic is required.
 3. Set `BACKEND_CORS_ORIGINS=https://<your-frontend-origin>` in the backend environment so the deployed dashboard can call the API. Origins are comma-separated; the local Vite dev origins (`http://localhost:5173`, `http://127.0.0.1:5173`) always remain allowed for development. Wildcard `*` is never used.
 4. Set `CLINIC_JSON_PATH=backend/tests/fixtures/clinic_fixture.json` in the backend environment to use the public synthetic clinic data for the live demo.
 5. The SQLite file is created at `backend/data/app.db` — mount a persistent volume if dashboard history must survive restarts.
-6. **Set `DASHBOARD_ADMIN_USERNAME`, `DASHBOARD_ADMIN_PASSWORD` and `DASHBOARD_SESSION_SECRET`** in the host's
-   secret store. Without all three the dashboard is locked (every `/api/*` call answers `401`) while
-   `/agent/run` and `/health` stay public — so the demo still works, but the operator cannot see the
-   dashboard. Use a long random `DASHBOARD_SESSION_SECRET` and do not reuse it across environments.
-7. Set `DASHBOARD_ENV=production` so the session cookie is issued with `Secure`, and serve the API over
-   HTTPS. (Recognised PaaS variables such as `RENDER` or `VERCEL` enable `Secure` automatically.)
+
 
 One command for local evaluation of everything:
 

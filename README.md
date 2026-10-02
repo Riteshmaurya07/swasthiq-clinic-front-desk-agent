@@ -459,7 +459,7 @@ cd frontend && npm run build
   `DASHBOARD_SESSION_SECRET` and a strong password are the only defences; adding throttling (and audit
   logging of failed attempts that records no credentials) is the recommended next step for an
   internet-facing deployment.
-- **No live deployment is included in this repository.** Hosting is documented below; if a deployment is later performed, the URL will be added there at that time.
+- **Live deployment:** The dashboard is live at [https://frontend-omega-sable-e1wat5r269.vercel.app](https://frontend-omega-sable-e1wat5r269.vercel.app). The backend API is hosted at `https://swasthiq-clinic-front-desk-agent.onrender.com`.
 
 ## Deployment instructions
 

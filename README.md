@@ -90,7 +90,7 @@ backend/
       engine_utils.py
     tools/              # the six tools + shared helpers + identity resolution
     persistence/        # SQLite display layer (database, models, repositories, timeline)
-  tests/                # 497 tests (synthetic fixture — no confidential data)
+  tests/                # 438 tests (synthetic fixture — no confidential data)
                         #   includes 117 H-3 emergency-detection regressions,
                         #   30 C-1..C-4 red-team regressions
   tests/fixtures/clinic_fixture.json   # bundled synthetic clinic data
@@ -102,7 +102,7 @@ frontend/
     components/layout/  # AppSidebar (shared across routes)
     components/handoffs/ components/conversation/
     pages/              # HandoffQueue, ConversationDetail
-    test/               # 41 vitest tests + API-shaped fixtures
+    test/               # 23 vitest tests + API-shaped fixtures
 adversarial/           # 8 adversarial scripts (authored by us, schema.md format)
 ```
 
@@ -305,7 +305,7 @@ After a `/agent/run` response is finalized, the run is recorded for the dashboar
 
 ## Handoff Queue
 
-Counters from real stats, open-handoff table (caller said / reason badge / time / resolve), resolve with in-flight spinner + duplicate-submission protection + idempotent success + error alert, professional empty state. All data from `GET /api/handoffs*`, reached only after a dashboard session exists.
+Counters from real stats, open-handoff table (caller said / reason badge / time / resolve), resolve with in-flight spinner + duplicate-submission protection + idempotent success + error alert, professional empty state. All data from `GET /api/handoffs*`.
 
 ## Conversation Detail
 
@@ -320,10 +320,10 @@ Sidebar, Card, Button, Badge, Table, Separator, Skeleton, Alert, Empty, Spinner,
 ## Testing
 
 ```bash
-# backend — 497 tests
+# backend — 438 tests
 python -m pytest -q
 
-# frontend - 42 tests
+# frontend - 23 tests
 cd frontend && npm test
 
 # production build
@@ -336,13 +336,12 @@ cd frontend && npm run build
 
 | Check | Result |
 |---|---|
-| Backend pytest | **497 passed** (1 deprecation warning from starlette's testclient) |
-| Frontend tests | **42 passed** |
+| Backend pytest | **438 passed** (1 deprecation warning from starlette's testclient) |
+| Frontend tests | **23 passed** |
 | Production build | success |
 | Adversarial cases | **8/8 scenarios**, 0 failures (plus 20 adversarial unit tests) |
 | H-3 emergency regressions | **117 passed**; 74 of the 117 fail against the pre-H-3 detector, so the suite is load-bearing rather than a restatement of current behaviour |
 | C-1..C-4 red-team regressions | **30 passed** |
-| H-2 dashboard auth regressions | **56 backend passed** (401 on all five dashboard routes, login/logout/session lifecycle, cookie, expiry, secret-rotation and secret-leak properties) + **6 CORS passed** (credentialed allowlist, never wildcard, POST preflight) + **19 frontend passed** (login gate, 401 handling, no password in web storage, no username rendered) |
 | Mutation safety | **0** unauthorized mutations, **0** post-terminal mutation leaks |
 | Determinism | **0** non-deterministic results across the repeated-run corpus |
 | Emergency corpus recall | 37/40 realistic phrasings detected; 0 false-positive urgency on medical-advice phrasings (15/15 advice phrasings routed) |
